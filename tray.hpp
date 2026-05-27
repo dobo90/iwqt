@@ -54,12 +54,14 @@ class Tray : public QDialog {
     void updateEnabledTray(bool);
     void refreshTray(bool);
     void makeAgent();
+    void updateIconTheme();
 
     std::string requestPassphrase(const std::string& path);
     std::tuple<std::string,std::string> requestUserAndPassphrase(const std::string& path);
 
     void createItems();
     void fillMenu();
+    QMenu *createIconThemeMenu();
     void createManageWindow();
 
     void connectedHandler(network n, QPixmap icon);

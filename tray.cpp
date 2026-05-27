@@ -9,6 +9,7 @@
 
 #include <QWidgetAction>
 #include <QAction>
+#include <QActionGroup>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
@@ -31,9 +32,12 @@
 #include <cstdio>
 #include <unistd.h>
 
+constexpr auto ICON_THEME_AUTO = "auto";
+constexpr auto ICON_THEME_DARK = "dark";
+constexpr auto ICON_THEME_LIGHT = "light";
+
 Tray::Tray(iwd &in): manager(in) {
-    isDarkMode = 
-        this->palette().window().color().value() < this->palette().windowText().color().value();
+    updateIconTheme();
 
     createTray();
 
@@ -196,6 +200,23 @@ void Tray::makeAgent() {
     };
 
     this->manager.register_agent(std::move(ui));
+}
+
+void Tray::updateIconTheme() {
+    auto iconTheme = settings.value(ICON_THEME_SETTING, ICON_THEME_AUTO).toString();
+
+    if(iconTheme == ICON_THEME_DARK) {
+        isDarkMode = true;
+        return;
+    }
+
+    if(iconTheme == ICON_THEME_LIGHT) {
+        isDarkMode = false;
+        return;
+    }
+
+    isDarkMode =
+        this->palette().window().color().value() < this->palette().windowText().color().value();
 }
 
 void Tray::connectedHandler(network n, QPixmap icon){
@@ -406,6 +427,7 @@ void Tray::fillMenu() {
 
     trayIconMenu->addMenu(networksMenu);
     trayIconMenu->addAction(scanAction);
+    trayIconMenu->addMenu(createIconThemeMenu());
 
     trayIconMenu->addSeparator();
     trayIconMenu->addAction(manageAction);
@@ -413,6 +435,41 @@ void Tray::fillMenu() {
 
     trayIcon->setContextMenu(trayIconMenu);
     trayIcon->show();
+}
+
+QMenu *Tray::createIconThemeMenu() {
+    auto menu = new QMenu(tr("&Icon Theme"), this);
+    auto group = new QActionGroup(menu);
+    group->setExclusive(true);
+
+    auto currentTheme = settings.value(ICON_THEME_SETTING, ICON_THEME_AUTO).toString();
+    if(currentTheme != ICON_THEME_DARK && currentTheme != ICON_THEME_LIGHT) {
+        currentTheme = ICON_THEME_AUTO;
+    }
+
+    auto addThemeAction = [this, menu, group, currentTheme](const QString &label, const char *value) {
+        auto action = menu->addAction(label);
+        action->setCheckable(true);
+        action->setChecked(currentTheme == value);
+        group->addAction(action);
+
+        connect(action, &QAction::triggered, this, [this, value] {
+            settings.setValue(ICON_THEME_SETTING, value);
+            updateIconTheme();
+
+            try {
+                refreshTray(false);
+            } catch(...) {
+                instantiateDevice();
+            }
+        });
+    };
+
+    addThemeAction(tr("&Auto"), ICON_THEME_AUTO);
+    addThemeAction(tr("&Dark Panel"), ICON_THEME_DARK);
+    addThemeAction(tr("&Light Panel"), ICON_THEME_LIGHT);
+
+    return menu;
 }
 
 void Tray::createManageWindow(){
