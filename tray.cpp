@@ -25,6 +25,7 @@
 #include <QMessageBox>
 
 #include <QWidget>
+#include <QIcon>
 #include <QInputDialog>
 #include <QThread>
 #include <QToolTip>
@@ -35,6 +36,7 @@
 constexpr auto ICON_THEME_AUTO = "auto";
 constexpr auto ICON_THEME_DARK = "dark";
 constexpr auto ICON_THEME_LIGHT = "light";
+constexpr auto ICON_THEME_SYSTEM = "system";
 
 Tray::Tray(iwd &in): manager(in) {
     updateIconTheme();
@@ -56,7 +58,17 @@ Tray::Tray(iwd &in): manager(in) {
 
 void Tray::createTray() {
     trayIcon = new QSystemTrayIcon(this);
-    trayIcon->setIcon(Utils::getIcon(isDarkMode ? FAILURE_ICON_PATH : DARK_FAILURE_ICON_PATH));
+    switch (iconTheme) {
+        case IconTheme::System:
+            trayIcon->setIcon(QIcon::fromTheme("network-wireless-disconnected"));
+            break;
+        case IconTheme::Dark:
+            trayIcon->setIcon(Utils::getIcon(FAILURE_ICON_PATH));
+            break;
+        case IconTheme::Light:
+            trayIcon->setIcon(Utils::getIcon(DARK_FAILURE_ICON_PATH));
+            break;
+    }
 }
 
 void Tray::iconActivated(QSystemTrayIcon::ActivationReason reason){
@@ -203,23 +215,29 @@ void Tray::makeAgent() {
 }
 
 void Tray::updateIconTheme() {
-    auto iconTheme = settings.value(ICON_THEME_SETTING, ICON_THEME_AUTO).toString();
+    auto setting = settings.value(ICON_THEME_SETTING, ICON_THEME_AUTO).toString();
 
-    if(iconTheme == ICON_THEME_DARK) {
-        isDarkMode = true;
+    if(setting == ICON_THEME_SYSTEM) {
+        iconTheme = IconTheme::System;
         return;
     }
 
-    if(iconTheme == ICON_THEME_LIGHT) {
-        isDarkMode = false;
+    if(setting == ICON_THEME_DARK) {
+        iconTheme = IconTheme::Dark;
         return;
     }
 
-    isDarkMode =
-        this->palette().window().color().value() < this->palette().windowText().color().value();
+    if(setting == ICON_THEME_LIGHT) {
+        iconTheme = IconTheme::Light;
+        return;
+    }
+
+    iconTheme =
+        this->palette().window().color().value() < this->palette().windowText().color().value()
+        ? IconTheme::Dark : IconTheme::Light;
 }
 
-void Tray::connectedHandler(network n, QPixmap icon){
+void Tray::connectedHandler(network n, QIcon icon){
     auto connected = this->cur_device.get_connected_network().has_value();
 
     if(connected){
@@ -245,26 +263,43 @@ void Tray::connectedHandler(network n, QPixmap icon){
     }
 }
 
-QPixmap Tray::getIconForStrength(network::strength_type st){
+QString Tray::iconNameForStrength(network::strength_type st) const {
     switch (st) {
-        case network::strength_type::EXCELLENT:
-            return Utils::getIcon(isDarkMode ? EXCELLENT_ICON_PATH : DARK_EXCELLENT_ICON_PATH);
-        case network::strength_type::GOOD:
-            return Utils::getIcon(isDarkMode ? GOOD_ICON_PATH : DARK_GOOD_ICON_PATH);
-        case network::strength_type::FAIR:
-            return Utils::getIcon(isDarkMode ? FAIR_ICON_PATH : DARK_FAIR_ICON_PATH);
-        case network::strength_type::WEAK:
-            return Utils::getIcon(isDarkMode ? WEAK_ICON_PATH : DARK_WEAK_ICON_PATH);
-        case network::strength_type::POOR:
-            return Utils::getIcon(isDarkMode ? POOR_ICON_PATH : DARK_POOR_ICON_PATH);
+        case network::strength_type::EXCELLENT: return "network-wireless-100";
+        case network::strength_type::GOOD:      return "network-wireless-80";
+        case network::strength_type::FAIR:      return "network-wireless-60";
+        case network::strength_type::WEAK:      return "network-wireless-40";
+        case network::strength_type::POOR:      return "network-wireless-20";
     }
-    return {};
+    return "network-wireless-0";
 }
 
-QPixmap Tray::addNetwork(network n) {
+QIcon Tray::iconForStrength(network::strength_type st) {
+    if (iconTheme == IconTheme::System) {
+        return QIcon::fromTheme(iconNameForStrength(st));
+    }
+
+    bool isDarkMode = iconTheme == IconTheme::Dark;
+    QPixmap pixmap;
+    switch (st) {
+        case network::strength_type::EXCELLENT:
+            pixmap = Utils::getIcon(isDarkMode ? EXCELLENT_ICON_PATH : DARK_EXCELLENT_ICON_PATH); break;
+        case network::strength_type::GOOD:
+            pixmap = Utils::getIcon(isDarkMode ? GOOD_ICON_PATH : DARK_GOOD_ICON_PATH); break;
+        case network::strength_type::FAIR:
+            pixmap = Utils::getIcon(isDarkMode ? FAIR_ICON_PATH : DARK_FAIR_ICON_PATH); break;
+        case network::strength_type::WEAK:
+            pixmap = Utils::getIcon(isDarkMode ? WEAK_ICON_PATH : DARK_WEAK_ICON_PATH); break;
+        case network::strength_type::POOR:
+            pixmap = Utils::getIcon(isDarkMode ? POOR_ICON_PATH : DARK_POOR_ICON_PATH); break;
+    }
+    return QIcon(pixmap);
+}
+
+void Tray::addNetwork(network n) {
     auto action = networksMenu->addAction(n.name.c_str());
 
-    QPixmap icon = getIconForStrength(n.strength());
+    QIcon icon = iconForStrength(n.strength());
 
     action->setIcon(icon);
 
@@ -275,7 +310,7 @@ QPixmap Tray::addNetwork(network n) {
             action->setChecked(true);
         });
         trayIconMenu->setIcon(icon);
-        return icon;
+        return;
     }
 
     connect(action, &QAction::triggered, this, [=, this] {
@@ -284,20 +319,28 @@ QPixmap Tray::addNetwork(network n) {
         });
         //needs to be saved so the callback is invoked later on
     });
-
-    return icon;
 }
 
-QPixmap Tray::processConnectedNetwork(network n) {
-    auto icon = addNetwork(n);
+void Tray::processConnectedNetwork(network n) {
+    addNetwork(n);
 
     QAction* disconnectAction = new QAction(tr("&Disconnect"), this);
 
     connect(disconnectAction, &QAction::triggered, this, [this, n] {
         this->cur_device.disconnect();
 
-        trayIcon->setIcon(Utils::getIcon(isDarkMode ? DISCONNECTED_ICON_PATH : DARK_DISCONNECTED_ICON_PATH));
-        
+        switch (iconTheme) {
+            case IconTheme::System:
+                trayIcon->setIcon(QIcon::fromTheme("network-wireless-off"));
+                break;
+            case IconTheme::Dark:
+                trayIcon->setIcon(QIcon(Utils::getIcon(DISCONNECTED_ICON_PATH)));
+                break;
+            case IconTheme::Light:
+                trayIcon->setIcon(QIcon(Utils::getIcon(DARK_DISCONNECTED_ICON_PATH)));
+                break;
+        }
+
         if(settings.value(SHOW_NOTIFICATIONS_SETTING, true).toBool()){
             trayIcon->showMessage(
                 tr("Disconnected from %1").arg(n.name),
@@ -313,7 +356,6 @@ QPixmap Tray::processConnectedNetwork(network n) {
     QAction* availableLabel = new QAction(tr("&Available"), this);
     availableLabel->setEnabled(false);
     networksMenu->addAction(availableLabel);
-    return icon;
 }
 
 void Tray::updateEnabledTray(bool powered){
@@ -322,14 +364,17 @@ void Tray::updateEnabledTray(bool powered){
     networksMenu->setEnabled(powered);
     scanAction->setEnabled(powered);
 
-    const char *icon;
-    if(powered){
-        icon = isDarkMode ? DISCONNECTED_ICON_PATH : DARK_DISCONNECTED_ICON_PATH;
-    } else {
-        icon = isDarkMode ? FAILURE_ICON_PATH : DARK_FAILURE_ICON_PATH;
+    switch (iconTheme) {
+        case IconTheme::System:
+            trayIcon->setIcon(QIcon::fromTheme(powered ? "network-wireless-off" : "network-wireless-disconnected"));
+            break;
+        case IconTheme::Dark:
+            trayIcon->setIcon(QIcon(Utils::getIcon(powered ? DISCONNECTED_ICON_PATH : FAILURE_ICON_PATH)));
+            break;
+        case IconTheme::Light:
+            trayIcon->setIcon(QIcon(Utils::getIcon(powered ? DARK_DISCONNECTED_ICON_PATH : DARK_FAILURE_ICON_PATH)));
+            break;
     }
-
-    trayIcon->setIcon(Utils::getIcon(icon));
 }
 
 void Tray::refreshTray(bool should_scan) {
@@ -362,7 +407,8 @@ void Tray::refreshTray(bool should_scan) {
             continue;
         }
 
-        trayIcon->setIcon(processConnectedNetwork(network));
+        processConnectedNetwork(network);
+        trayIcon->setIcon(iconForStrength(network.strength()));
 
         inetworks.erase(inetworks.begin() + i);
 
@@ -370,7 +416,17 @@ void Tray::refreshTray(bool should_scan) {
     }
 
     if(size == inetworks.size()){
-        trayIcon->setIcon(Utils::getIcon(isDarkMode ? DISCONNECTED_ICON_PATH : DARK_DISCONNECTED_ICON_PATH));
+        switch (iconTheme) {
+            case IconTheme::System:
+                trayIcon->setIcon(QIcon::fromTheme("network-wireless-off"));
+                break;
+            case IconTheme::Dark:
+                trayIcon->setIcon(QIcon(Utils::getIcon(DISCONNECTED_ICON_PATH)));
+                break;
+            case IconTheme::Light:
+                trayIcon->setIcon(QIcon(Utils::getIcon(DARK_DISCONNECTED_ICON_PATH)));
+                break;
+        }
     }
 
     for(auto n: inetworks) {
@@ -443,7 +499,7 @@ QMenu *Tray::createIconThemeMenu() {
     group->setExclusive(true);
 
     auto currentTheme = settings.value(ICON_THEME_SETTING, ICON_THEME_AUTO).toString();
-    if(currentTheme != ICON_THEME_DARK && currentTheme != ICON_THEME_LIGHT) {
+    if(currentTheme != ICON_THEME_DARK && currentTheme != ICON_THEME_LIGHT && currentTheme != ICON_THEME_SYSTEM) {
         currentTheme = ICON_THEME_AUTO;
     }
 
@@ -468,6 +524,7 @@ QMenu *Tray::createIconThemeMenu() {
     addThemeAction(tr("&Auto"), ICON_THEME_AUTO);
     addThemeAction(tr("&Dark Panel"), ICON_THEME_DARK);
     addThemeAction(tr("&Light Panel"), ICON_THEME_LIGHT);
+    addThemeAction(tr("&System Theme"), ICON_THEME_SYSTEM);
 
     return menu;
 }

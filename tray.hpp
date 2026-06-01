@@ -9,6 +9,7 @@
 #include "manage_window.hpp"
 
 #include <QSystemTrayIcon>
+#include <QIcon>
 
 #include <QDialog>
 #include <sdbus-c++/IProxy.h>
@@ -33,6 +34,12 @@ class Tray : public QDialog {
   public:
     Tray(iwd &manager);
 
+    enum class IconTheme {
+        Light,
+        Dark,
+        System
+    };
+
     void setVisible(bool visible) override;
 
   private slots:
@@ -41,16 +48,16 @@ class Tray : public QDialog {
   private:
     iwd &manager;
 
-    bool isDarkMode;
+    IconTheme iconTheme = IconTheme::Light;
 
     adapter cur_adapter;
     device cur_device;
 
     void createTray();
     void instantiateDevice();
-    QPixmap addNetwork(network n);
+    void addNetwork(network n);
 
-    QPixmap processConnectedNetwork(network n);
+    void processConnectedNetwork(network n);
     void updateEnabledTray(bool);
     void refreshTray(bool);
     void makeAgent();
@@ -64,9 +71,10 @@ class Tray : public QDialog {
     QMenu *createIconThemeMenu();
     void createManageWindow();
 
-    void connectedHandler(network n, QPixmap icon);
+    void connectedHandler(network n, QIcon icon);
 
-    QPixmap getIconForStrength(network::strength_type st);
+    QIcon iconForStrength(network::strength_type st);
+    QString iconNameForStrength(network::strength_type st) const;
 
     std::unique_ptr<sdbus::IProxy> saved_proxy;
     QMenu *networksMenu = NULL;
